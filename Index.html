@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>PaintTrack Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+        input, select { font-size: 16px !important; }
+        .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 24px); }
+        .active-nav { color: #2563eb; transform: scale(1.15); }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        [v-cloak] { display: none; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans select-none">
+    <div id="app" v-cloak class="flex flex-col min-h-screen">
+        
+        <!-- Header -->
+        <header class="bg-white border-b px-6 py-4 pt-12 sticky top-0 z-20 flex justify-between items-center shadow-sm">
+            <div>
+                <h1 class="text-xl font-black text-blue-600 italic tracking-tighter uppercase leading-none">PaintTrack Pro</h1>
+                <p class="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-1">Business Manager</p>
+            </div>
+            <div v-if="saved" class="text-[9px] bg-blue-600 text-white px-2 py-1 rounded-md font-black animate-pulse uppercase">Saved</div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="flex-1 p-4 pb-32">
+            
+            <!-- VIEW: LOG LABOR (Bulk Entry) -->
+            <div v-if="view === 'log'" class="space-y-4">
+                <div class="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-black text-slate-400 uppercase">Date</label>
+                            <input type="date" v-model="form.date" class="w-full bg-slate-50 rounded-2xl p-4 border-0 text-sm font-bold outline-none">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-black text-slate-400 uppercase">Hours</label>
+                            <input type="number" step="0.5" v-model="form.hours" class="w-full bg-slate-50 rounded-2xl p-4 border-0 text-sm font-bold outline-none">
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-1 mb-6">
+                        <label class="text-[10px] font-black text-slate-400 uppercase">Job Site</label>
+                        <select v-model="form.siteId" class="w-full bg-slate-50 rounded-2xl p-4 border-0 font-bold text-sm outline-none appearance-none">
+                            <option value="">Select Site...</option>
+                            <option v-for="s in sites" :value="s.id">{{s.name}}</option>
+                        </select>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="text-[10px] font-black text-slate-400 uppercase">Select Crew</label>
+                        <div class="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
+                            <button v-for="e in employees" @click="toggleEmp(e.id)" 
+                                 :class="form.selected.includes(e.id) ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-50 text-slate-500'"
+                                 class="p-4 rounded-2xl font-bold text-left flex justify-between items-center transition-all active:scale-95 border border-transparent">
+                                {{e.name}}
+                                <span v-if="form.selected.includes(e.id)">✓</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button @click="saveLabor" :disabled="!form.siteId || !form.selected.length"
+                            class="w-full bg-blue-600 disabled:bg-slate-100 disabled:text-slate-300 text-white font-black py-5 rounded-[2rem] mt-8 shadow-xl shadow-blue-100 active:scale-95 transition-all">
+                        LOG HOURS ({{form.selected.length}} MEN)
+                    </button>
+                </div>
+            </div>
+
+            <!-- VIEW: JOBS (Revenue & Payments) -->
+            <div v-if="view === 'jobs'" class="space-y-6">
+                <div v-for="site in sites" :key="site.id" class="bg-white rounded-[2.5rem] border border-slate-100 overflow-hidden shadow-sm">
+                    <div class="p-5 flex justify-between items-center" :class="site.isPaid ? 'bg-emerald-500 text-white' : 'bg-slate-900 text-white'">
+                        <span class="font-black uppercase text-sm tracking-widest">{{ site.name }}</span>
+                        <span class="text-xl font-black">${{ calculateSiteTotal(site.id).toLocaleString() }}</span>
+                    </div>
+                    <div class="p-5 space-y-4">
+                        <button @click="togglePaid(site.id)" :class="site.isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-orange-50 text-orange-600'" class="w-full py-3 rounded-2xl font-black text-xs uppercase tracking-widest">
+                            {{ site.isPaid ? '🟢 PAID & COLLECTED' : '🔴 UNPAID / PENDING' }}
+                        </button>
+                        
+                        <div class="space-y-2">
+                            <div v-for="item in site.pricingItems" :key="item.id" class="flex justify-between items-center border-b border-slate-50 pb-2">
+                                <div class="flex flex-col">
+                                    <span class="text-xs font-bold">{{item.desc}}</span>
+                                    <span class="text-[9px] text-slate-400 font-black uppercase">{{item.qty}}{{item.unit}} x ${{item.price}}</span>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <span class="text-sm font-black">${{(item.qty * item.price).toLocaleString()}}</span>
+                                    <button @click="removeItemFromSite(site.id, item.id)" class="text-red-300">✕</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-50 p-4 rounded-3xl space-y-2">
+                            <input v-model="priceForm[site.id].desc" placeholder="Area (e.g. Walls)" class="w-full bg-white p-3 rounded-xl text-xs font-bold outline-none border-0 shadow-sm">
+                            <div class="grid grid-cols-3 gap-2">
+                                <input v-model="priceForm[site.id].qty" type="number" placeholder="Qty" class="bg-white p-3 rounded-xl text-xs font-bold outline-none border-0 shadow-sm">
+                                <input v-model="priceForm[site.id].unit" placeholder="m2" class="bg-white p-3 rounded-xl text-xs font-bold outline-none border-0 shadow-sm uppercase text-center">
+                                <input v-model="priceForm[site.id].price" type="number" placeholder="Price" class="bg-white p-3 rounded-xl text-xs font-bold outline-none border-0 shadow-sm">
+                            </div>
+                            <button @click="addItemToSite(site.id)" class="w-full bg-slate-800 text-white font-black py-3 rounded-xl text-[10px] uppercase tracking-widest mt-1">Add Line Item</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VIEW: TOTALS (Analytics) -->
+            <div v-if="view === 'stats'" class="space-y-6">
+                <div class="bg-slate-900 p-6 rounded-[2.5rem] shadow-xl text-white">
+                    <h3 class="text-[10px] font-black text-slate-500 uppercase mb-4 tracking-widest text-center">Cash Flow</h3>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
+                            <p class="text-[9px] font-black text-emerald-400 uppercase mb-1">Paid</p>
+                            <p class="text-xl font-black">${{ paidTotal.toLocaleString() }}</p>
+                        </div>
+                        <div class="bg-white/5 p-4 rounded-3xl border border-white/5">
+                            <p class="text-[9px] font-black text-orange-400 uppercase mb-1">Owed</p>
+                            <p class="text-xl font-black">${{ unpaidTotal.toLocaleString() }}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+                    <h3 class="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest uppercase">Profitability</h3>
+                    <div v-for="site in sites" :key="site.id" class="py-4 border-b border-slate-50 last:border-0">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="font-bold text-slate-800 text-sm">{{ site.name }}</span>
+                            <span class="text-emerald-500 font-black text-sm">${{ calculateEarningsPerHour(site.id) }}/hr</span>
+                        </div>
+                        <div class="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                            <div class="bg-blue-500 h-full" :style="{ width: getWidth(site.id) }"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VIEW: HISTORY -->
+            <div v-if="view === 'history'" class="space-y-3">
+                <div v-for="log in sortedLogs" :key="log.id" class="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex justify-between items-center">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-[9px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase">{{ log.date }}</span>
+                            <span class="text-[9px] font-black text-slate-400 bg-slate-50 px-2 py-0.5 rounded uppercase">{{ log.h }} HRS</span>
+                        </div>
+                        <p class="font-bold text-slate-800 text-sm">{{ getEmpName(log.eid) }}</p>
+                        <p class="text-[9px] text-slate-400 font-bold uppercase tracking-tight">{{ getSiteName(log.sid) }}</p>
+                    </div>
+                    <button @click="deleteLog(log.id)" class="text-red-200 p-2 active:scale-75 transition-transform">✕</button>
+                </div>
+            </div>
+
+            <!-- VIEW: SETUP -->
+            <div v-if="view === 'setup'" class="space-y-8 pb-10">
+                <div class="space-y-3 px-2">
+                    <h2 class="font-black text-lg">Manage Data</h2>
+                    <div class="space-y-2">
+                        <div class="flex gap-2">
+                            <input v-model="news.site" placeholder="Site Name" class="flex-1 bg-white p-4 rounded-2xl border-0 shadow-sm font-bold outline-none">
+                            <button @click="addSite" class="bg-slate-900 text-white px-6 rounded-2xl font-black text-xl">+</button>
+                        </div>
+                        <div class="flex gap-2">
+                            <input v-model="news.emp" placeholder="Crew Name" class="flex-1 bg-white p-4 rounded-2xl border-0 shadow-sm font-bold outline-none">
+                            <button @click="addEmp" class="bg-slate-900 text-white px-6 rounded-2xl font-black text-xl">+</button>
+                        </div>
+                    </div>
+                    <div class="pt-4 space-y-2">
+                        <div v-for="s in sites" class="flex justify-between bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
+                            <span class="font-bold text-sm">{{s.name}}</span>
+                            <button @click="removeSite(s.id)" class="text-red-400 text-xs font-black uppercase">Del Site</button>
+                        </div>
+                        <div v-for="e in employees" class="flex justify-between bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
+                            <span class="font-bold text-sm">{{e.name}}</span>
+                            <button @click="removeEmp(e.id)" class="text-red-400 text-xs font-black uppercase">Del Crew</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="p-6 bg-slate-900 rounded-[2.5rem] text-white space-y-4 mx-2">
+                    <h2 class="font-black text-lg uppercase tracking-tighter">Database Tools</h2>
+                    <div class="grid grid-cols-1 gap-2">
+                        <button @click="exportData" class="bg-white/5 p-4 rounded-2xl font-bold text-xs text-left flex justify-between items-center">
+                            Download Backup File 💾
+                        </button>
+                        <label class="bg-white/5 p-4 rounded-2xl font-bold text-xs text-left flex justify-between items-center cursor-pointer">
+                            Upload Backup File 📂
+                            <input type="file" @change="importData" class="hidden">
+                        </label>
+                        <button @click="clearLogs" class="bg-red-500/10 text-red-400 p-4 rounded-2xl font-bold text-xs text-left flex justify-between items-center">
+                            Factory Reset ⚠️
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Navbar -->
+        <nav class="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-slate-100 px-6 py-4 pb-10 flex justify-between safe-bottom z-30 shadow-lg">
+            <button v-for="t in ['log', 'jobs', 'stats', 'history', 'setup']" @click="view = t" :class="{ 'active-nav': view === t }" class="text-slate-300 transition-all flex flex-col items-center">
+                <div v-if="t==='log'"><svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z"></path><path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd"></path></svg></div>
+                <div v-if="t==='jobs'"><svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4z"></path><path fill-rule="evenodd" d="M18 9H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clip-rule="evenodd"></path></svg></div>
+                <div v-if="t==='stats'"><svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"></path></svg></div>
+                <div v-if="t==='history'"><svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"></path></svg></div>
+                <div v-if="t==='setup'"><svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.533 1.533 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.533 1.533 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"></path></svg></div>
+                <span class="text-[7px] font-black uppercase mt-1 tracking-tighter">{{ t }}</span>
+            </button>
+        </nav>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, watch, reactive } = Vue;
+        createApp({
+            setup() {
+                const view = ref('log');
+                const saved = ref(false);
+                
+                // Persistence
+                const sites = ref(JSON.parse(localStorage.getItem('pt_final_sites') || '[]'));
+                const employees = ref(JSON.parse(localStorage.getItem('pt_final_emps') || '[]'));
+                const logs = ref(JSON.parse(localStorage.getItem('pt_final_logs') || '[]'));
+                
+                const form = ref({ date: new Date().toISOString().split('T')[0], hours: 8, siteId: '', selected: [] });
+                const news = ref({ site: '', emp: '' });
+                const priceForm = reactive({});
+
+                const initPriceForms = () => {
+                    sites.value.forEach(s => {
+                        if (!priceForm[s.id]) {
+                            priceForm[s.id] = { desc: '', qty: 0, unit: 'm2', price: 0 };
+                        }
+                    });
+                };
+                initPriceForms();
+
+                watch([sites, employees, logs], () => {
+                    localStorage.setItem('pt_final_sites', JSON.stringify(sites.value));
+                    localStorage.setItem('pt_final_emps', JSON.stringify(employees.value));
+                    localStorage.setItem('pt_final_logs', JSON.stringify(logs.value));
+                    saved.value = true;
+                    setTimeout(() => saved.value = false, 1000);
+                }, { deep: true });
+
+                const toggleEmp = (id) => {
+                    const i = form.value.selected.indexOf(id);
+                    if (i > -1) form.value.selected.splice(i, 1);
+                    else form.value.selected.push(id);
+                };
+                const saveLabor = () => {
+                    form.value.selected.forEach(eid => {
+                        logs.value.push({ id: Date.now()+Math.random(), eid, sid: form.value.siteId, date: form.value.date, h: parseFloat(form.value.hours) });
+                    });
+                    form.value.selected = [];
+                };
+                const deleteLog = (id) => { if(confirm('Delete this log?')) logs.value = logs.value.filter(l => l.id !== id); };
+                
+                const addItemToSite = (sid) => {
+                    const s = sites.value.find(x => x.id === sid);
+                    const f = priceForm[sid];
+                    if (!f.desc) return;
+                    if (!s.pricingItems) s.pricingItems = [];
+                    s.pricingItems.push({ id: Date.now(), desc: f.desc, qty: f.qty, unit: f.unit, price: f.price });
+                    f.desc = ''; f.qty = 0; f.price = 0;
+                };
+                const removeItemFromSite = (sid, iid) => {
+                    const s = sites.value.find(x => x.id === sid);
+                    s.pricingItems = s.pricingItems.filter(i => i.id !== iid);
+                };
+                const togglePaid = (sid) => {
+                    const s = sites.value.find(x => x.id === sid);
+                    s.isPaid = !s.isPaid;
+                };
+
+                const calculateSiteTotal = (sid) => {
+                    const s = sites.value.find(x => x.id === sid);
+                    if (!s?.pricingItems) return 0;
+                    return s.pricingItems.reduce((acc, curr) => acc + (curr.qty * curr.price), 0);
+                };
+                const getSiteHours = (sid) => logs.value.filter(l => l.sid === sid).reduce((a,b) => a + b.h, 0);
+                const calculateEarningsPerHour = (sid) => {
+                    const rev = calculateSiteTotal(sid);
+                    const hrs = getSiteHours(sid);
+                    return hrs > 0 ? (rev / hrs).toFixed(2) : '0';
+                };
+                
+                const paidTotal = computed(() => sites.value.filter(s => s.isPaid).reduce((acc, s) => acc + calculateSiteTotal(s.id), 0));
+                const unpaidTotal = computed(() => sites.value.filter(s => !s.isPaid).reduce((acc, s) => acc + calculateSiteTotal(s.id), 0));
+                const sortedLogs = computed(() => [...logs.value].sort((a,b) => new Date(b.date) - new Date(a.date)));
+                const getWidth = (sid) => {
+                    const val = parseFloat(calculateEarningsPerHour(sid));
+                    return Math.min(val, 100) + '%';
+                };
+
+                const getSiteName = (id) => sites.value.find(s => s.id === id)?.name || 'Deleted';
+                const getEmpName = (id) => employees.value.find(e => e.id === id)?.name || 'Deleted';
+
+                const addSite = () => { 
+                    if(news.value.site) {
+                        const id = Date.now();
+                        sites.value.push({ id, name: news.value.site, pricingItems: [], isPaid: false });
+                        priceForm[id] = { desc: '', qty: 0, unit: 'm2', price: 0 };
+                    }
+                    news.value.site = ''; 
+                };
+                const addEmp = () => { if(news.value.emp) employees.value.push({id: Date.now(), name: news.value.emp}); news.value.emp = ''; };
+                const removeSite = (id) => { if(confirm('Delete Site?')) sites.value = sites.value.filter(s => s.id !== id); };
+                const removeEmp = (id) => { if(confirm('Delete Crew?')) employees.value = employees.value.filter(e => e.id !== id); };
+                const clearLogs = () => { if(confirm('WIPE ALL DATA FOREVER?')) { logs.value = []; sites.value = []; employees.value = []; } };
+
+                const exportData = () => {
+                    const data = { s: sites.value, e: employees.value, l: logs.value };
+                    const b = new Blob([JSON.stringify(data)], { type: 'application/json' });
+                    const a = document.createElement('a'); a.href = URL.createObjectURL(b);
+                    a.download = `painttrack_pro_backup.json`; a.click();
+                };
+                const importData = (ev) => {
+                    const r = new FileReader();
+                    r.onload = (e) => {
+                        const d = JSON.parse(e.target.result);
+                        sites.value = d.s; employees.value = d.e; logs.value = d.l;
+                        initPriceForms(); alert('Data Restored!');
+                    };
+                    r.readAsText(ev.target.files[0]);
+                };
+
+                return { 
+                    view, sites, employees, form, news, priceForm, saved,
+                    toggleEmp, saveLabor, sortedLogs, deleteLog, togglePaid,
+                    addItemToSite, removeItemFromSite, calculateSiteTotal,
+                    getSiteHours, calculateEarningsPerHour, paidTotal, unpaidTotal,
+                    getSiteName, getEmpName, addSite, addEmp, removeSite, removeEmp,
+                    exportData, importData, clearLogs, getWidth
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
